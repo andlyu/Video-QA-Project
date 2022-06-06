@@ -20,7 +20,7 @@ train:
   module_dim: 512
   glove: True
   k_max_frame_level: 16
-  k_max_clip_level: 8
+  k_max_clip_level: 24
   spl_resolution: 1
 
 
@@ -36,5 +36,4 @@ dataset:
   question_type: 'frameqa'
   data_dir: 'data/tgif-qa/frameqa' #Nothing in this folder
   #save_dir: 'results/gpt2_captions/'
-  #save_dir: 'results/results_sparse_loss/'
-  save_dir: 'results/results_results_w_loss'
+  save_dir: 'results/results_vicreg/'

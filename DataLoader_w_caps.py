@@ -44,7 +44,7 @@ def load_vocab(path):
 
 class VideoQADataset(Dataset):
 
-    def __init__(self, answers, ans_candidates, ans_candidates_len, questions, questions_len, video_ids, q_ids,
+    def __init__(self, answers, ans_candidates, ans_candidates_len, questions, questions_len, video_ids, q_ids, captions, 
                  app_feature_h5, app_feat_id_to_index, motion_feature_h5, motion_feat_id_to_index):
         # convert data to tensor
         self.all_answers = answers
@@ -56,6 +56,7 @@ class VideoQADataset(Dataset):
         self.motion_feature_h5 = motion_feature_h5
         self.app_feat_id_to_index = app_feat_id_to_index
         self.motion_feat_id_to_index = motion_feat_id_to_index
+        self.captions = captions
 
         if not np.any(ans_candidates):
             self.question_type = 'openended'
@@ -72,6 +73,11 @@ class VideoQADataset(Dataset):
             ans_candidates = self.all_ans_candidates[index]
             ans_candidates_len = self.all_ans_candidates_len[index]
         question = self.all_questions[index]
+        print(question)
+        print(self.captions[index])
+        if(self.captions is not None):
+
+            question = self.captions[index] + ' <Q> ' +  question
         question_len = self.all_questions_len[index]
         video_idx = self.all_video_ids[index].item()
         question_idx = self.all_q_ids[index]
@@ -105,12 +111,12 @@ class VideoQADataLoader(DataLoader):
 
     def __init__(self, **kwargs): 
         vocab_json_path = str(kwargs.pop('vocab_json'))
+        caption_dir = str(kwargs.pop('caption_dir'))
         print('loading vocab from %s' % (vocab_json_path))
         vocab = load_vocab(vocab_json_path)
 
         with open('/usr0/home/alyubovs/agqa/storage/video/strID2numID.json', 'rb') as f: # TODO: PATH
             strID2NumID = json.load(f)
-        
         question_pt_path = str(kwargs.pop('question_pt'))
         print('loading questions from %s' % (question_pt_path))
         question_type = kwargs.pop('question_type')
@@ -118,12 +124,12 @@ class VideoQADataLoader(DataLoader):
             obj = pickle.load(f)
             questions = obj['questions']
             questions_len = obj['questions_len']
-            video_ids = obj['video_ids']
-            video_ids = [strID2NumID[q_id[:5]] for q_id in video_ids]
+            video_str_ids = obj['video_ids']
+            video_str_ids = [q_id[:5] for q_id in video_str_ids]
+            video_ids = [strID2NumID[v_id] for v_id in video_str_ids]
             video_ids = np.asarray(video_ids)
             q_ids = obj['question_id']
             answers = obj['answers']
-            print('average question length is ', np.mean(questions_len))
             if kwargs.pop('sample'):
                 z = list(zip(questions, questions_len, video_ids, q_ids, answers))
                 s = random.sample(z, min(len(z),50000))
@@ -140,9 +146,20 @@ class VideoQADataLoader(DataLoader):
                 ans_candidates = obj['ans_candidates']
                 ans_candidates_len = obj['ans_candidates_len']
 
+        captions = None
         if 'train_num' in kwargs:
             trained_num = kwargs.pop('train_num')
-            if trained_num > 0:
+            if(caption_dir != None):
+                caption_path = caption_dir + 'train_captions.json'
+                captions = json.load(open(caption_path, 'r'))
+                idx_mask = list(np.where([str_id in captions.keys() for str_id in video_str_ids])[0])
+                questions = [questions[i] for  i in idx_mask]
+                questions_len = [questions_len[i] for i in idx_mask]
+                video_ids = [video_ids[i] for i in idx_mask]
+                q_ids = [q_ids[i] for i in idx_mask]
+                answers = [answers[i] for i in idx_mask]
+                captions = [captions[video_str_ids[i]] for i in idx_mask]
+            elif trained_num > 0:
                 questions = questions[:trained_num]
                 questions_len = questions_len[:trained_num]
                 video_ids = video_ids[:trained_num]
@@ -153,7 +170,17 @@ class VideoQADataLoader(DataLoader):
                     ans_candidates_len = ans_candidates_len[:trained_num]
         if 'val_num' in kwargs:
             val_num = kwargs.pop('val_num')
-            if val_num > 0:
+            if(caption_dir != None):
+                caption_path = caption_dir + 'val_captions.json'
+                captions = json.load(open(caption_path, 'r'))
+                idx_mask = list(np.where([str_id in captions.keys() for str_id in video_str_ids])[0])
+                questions = [questions[i] for  i in idx_mask]
+                questions_len = [questions_len[i] for i in idx_mask]
+                video_ids = [video_ids[i] for i in idx_mask]
+                q_ids = [q_ids[i] for i in idx_mask]
+                answers = [answers[i] for i in idx_mask]
+                captions = [captions[video_str_ids[i]] for i in idx_mask]
+            elif val_num > 0:
                 questions = questions[:val_num]
                 questions_len = questions_len[:val_num]
                 video_ids = video_ids[:val_num]
@@ -164,7 +191,17 @@ class VideoQADataLoader(DataLoader):
                     ans_candidates_len = ans_candidates_len[:val_num]
         if 'test_num' in kwargs:
             test_num = kwargs.pop('test_num')
-            if test_num > 0:
+            if(caption_dir != None):
+                caption_path = caption_dir + 'test_captions.json'
+                captions = json.load(open(caption_path, 'r'))
+                idx_mask = list(np.where([str_id in captions.keys() for str_id in video_str_ids])[0])
+                questions = [questions[i] for  i in idx_mask]
+                questions_len = [questions_len[i] for i in idx_mask]
+                video_ids = [video_ids[i] for i in idx_mask]
+                q_ids = [q_ids[i] for i in idx_mask]
+                answers = [answers[i] for i in idx_mask]
+                captions = [captions[video_str_ids[i]] for i in idx_mask]
+            elif test_num > 0:
                 questions = questions[:test_num]
                 questions_len = questions_len[:test_num]
                 video_ids = video_ids[:test_num]
@@ -173,6 +210,7 @@ class VideoQADataLoader(DataLoader):
                 if question_type in ['action', 'transition']:
                     ans_candidates = ans_candidates[:test_num]
                     ans_candidates_len = ans_candidates_len[:test_num]
+
 
         print('loading appearance feature from %s' % (kwargs['appearance_feat']))
         with h5py.File(kwargs['appearance_feat'], 'r') as app_features_file:
@@ -192,10 +230,11 @@ class VideoQADataLoader(DataLoader):
         questions_len = np.asarray(questions_len)[id_mask]
         video_ids = np.asarray(video_ids)[id_mask]
         q_ids = np.asarray(q_ids)[id_mask]
+        captions = np.asarray(captions)[id_mask]
 
 
         self.dataset = VideoQADataset(answers, ans_candidates, ans_candidates_len, questions, questions_len,
-                                      video_ids, q_ids,
+                                      video_ids, q_ids, captions,
                                       self.app_feature_h5, app_feat_id_to_index, self.motion_feature_h5,
                                       motion_feat_id_to_index)
 

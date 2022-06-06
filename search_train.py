@@ -24,18 +24,15 @@ from utils import todevice
 from validate import validate
 
 import model.HCRN as HCRN
-
-from utils import todevice
-
 from config import cfg, cfg_from_file
 
 torch.autograd.set_detect_anomaly(True)
 
 def train(cfg):
     start_time = time.time()
-    run_name =  f'{start_time%10}dif_{round(cfg.train.loss_ratio,2)}'+ \
+    run_name =  f'{round(start_time%10,4)}dif_{round(cfg.train.loss_ratio,2)}'+ \
                 f'_var_{round(cfg.train.var_loss,2)}_inv_{round(cfg.train.inv_loss,2)}' + \
-                f'_cov_{round(cfg.train.cov_loss,2)}'    
+                f'_cov_{round(cfg.train.cov_loss,2)}'
     print(run_name)
     print('num wrkers', cfg.num_workers)
     logging.info("Create train_loader and val_loader.........")
@@ -76,7 +73,7 @@ def train(cfg):
             'batch_size': cfg.train.batch_size,
             'num_workers': cfg.num_workers,
             'shuffle': False,
-            'sample': True,
+            'sample': False,
         }                                                                                                                                           
         val_loader = VideoQADataLoader(**val_loader_kwargs)
         logging.info("number of val instances: {}".format(len(val_loader.dataset)))
@@ -138,6 +135,8 @@ def train(cfg):
 
     logging.info("Start training........") 
     for epoch in range(start_epoch, cfg.train.max_epochs):
+        if(epoch == 11):
+            return
         logging.info('>>>>>> epoch {epoch} <<<<<<'.format(epoch=colored("{}".format(epoch), "green", attrs=["bold"])))
         model.train()
         total_acc, count = 0, 0
@@ -228,12 +227,12 @@ def train(cfg):
                 total_acc += aggreeings.sum().item()
                 count += answers.size(0)
                 train_accuracy = total_acc / count
-                wandb.log({'avg_acc': train_accuracy, \
-                            'avg_loss': avg_loss, \
-                            'avg_d1_loss': avg_d1_mean, \
-                            'avg_var_loss': avg_losses['var_loss'], \
-                            'avg_inv_loss': avg_losses['inv_loss'], \
-                            'avg_cov_loss': avg_losses['cov_loss']})
+                # wandb.log({'avg_acc': train_accuracy, \
+                #             'avg_loss': avg_loss, \
+                #             'avg_d1_loss': avg_d1_mean, \
+                #             'avg_var_loss': avg_losses['var_loss'], \
+                #             'avg_inv_loss': avg_losses['inv_loss'], \
+                #             'avg_cov_loss': avg_losses['cov_loss']})
                 sys.stdout.write(
                     "\rProgress = {progress}   ce_loss = {ce_loss}   avg_loss = {avg_loss}    train_acc = {train_acc}    avg_acc = {avg_acc}    exp: {exp_name}".format(
                         progress=colored("{:.3f}".format(progress), "green", attrs=['bold']),
@@ -244,7 +243,7 @@ def train(cfg):
                         avg_acc=colored("{:.4f}".format(train_accuracy), "red", attrs=['bold']),
                         exp_name=cfg.exp_name))
                 sys.stdout.flush()
-            if i % 3250 == 0 and i != 0: #3250 == 0 and i != 0: #need to wait an hour and a half before running each evaluation
+            if( i==325 or (i % 3250 == 0 and i != 0)): #3250 == 0 and i != 0: #need to wait an hour and a half before running each evaluation
                                         #100 bathces / 2.5 min : 400b/10m: 800b/h : 3k/4h
                 output_dir = os.path.join(cfg.dataset.save_dir, 'preds')
                 if not os.path.exists(output_dir):
@@ -252,15 +251,22 @@ def train(cfg):
                 else:
                     assert os.path.isdir(output_dir)
                 valid_acc = validate(cfg, model, VideoQADataLoader(**val_loader_kwargs_sample), device, write_preds=False) 
-                wandb.log({'valid_acc': valid_acc})
+
+                wandb.log({'avg_acc': train_accuracy, \
+                            'avg_loss': avg_loss, \
+                            'avg_d1_loss': avg_d1_mean, \
+                            'avg_var_loss': avg_losses['var_loss'], \
+                            'avg_inv_loss': avg_losses['inv_loss'], \
+                            'avg_cov_loss': avg_losses['cov_loss'], \
+                            'valid_acc': valid_acc})
+                #wandb.log({'valid_acc': valid_acc})
                 logging.info('~~~~~~ Valid Accuracy: %.4f ~~~~~~~' % valid_acc)
                 sys.stdout.write('~~~~~~ Valid Accuracy: {valid_acc} ~~~~~~~\n'.format(
                     valid_acc=colored("{:.4f}".format(valid_acc), "red", attrs=['bold'])))
                 sys.stdout.flush()
                 model.train()
                 print('saving to ')
-                save_checkpoint(epoch, model, optimizer, model_kwargs_tosave, os.path.join(ckpt_dir, f'model_half_ep_{run_name}.pt'))
-                
+
 
         sys.stdout.write("\n")
         if cfg.dataset.question_type == 'count':
@@ -287,11 +293,11 @@ def train(cfg):
                     os.makedirs(ckpt_dir)
                 else:
                     assert os.path.isdir(ckpt_dir)
-                save_checkpoint(epoch, model, optimizer, model_kwargs_tosave, os.path.join(ckpt_dir, 'model'+ f'{run_name}.pt'))
+                save_checkpoint(epoch, model, optimizer, model_kwargs_tosave, os.path.join(ckpt_dir, 'model'+str(cfg.train.loss_ratio)+ f'{run_name}.pt'))
                 sys.stdout.write('\n >>>>>> save highest validation to %s <<<<<< \n' % (ckpt_dir))
                 sys.stdout.flush()
 
-            save_checkpoint(epoch, model, optimizer, model_kwargs_tosave, os.path.join(ckpt_dir, 'model-current'+ f'{run_name}.pt'))
+            save_checkpoint(epoch, model, optimizer, model_kwargs_tosave, os.path.join(ckpt_dir, 'model-current'+str(cfg.train.loss_ratio)+ f'{run_name}.pt'))
             sys.stdout.write('\n >>>>>> save current model to %s <<<<<< \n' % (ckpt_dir))
             sys.stdout.flush()
 
@@ -344,8 +350,8 @@ def save_checkpoint(epoch, model, optimizer, model_kwargs, filename):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--cfg', dest='cfg_file', help='optional config file', default='tgif_qa_action.yml', type=str)
-    parser.add_argument('--metric', dest='metric', help='type of training', default='all', type=str)
+    parser.add_argument('--cfg', dest='cfg_file', help='optional config file', default='configs/tgif_qa_frameqa.yml', type=str)
+    parser.add_argument('--metric', dest='metric', help='type of training', default='balanced', type=str)
     parser.add_argument('--loss', dest='loss', help='weight added to loss', default='0', type=float)
     parser.add_argument('--var_loss', dest='var_loss', help='weight added to variance loss in VICReg', default='0', type=float)
     parser.add_argument('--inv_loss', dest='inv_loss', help='weight added to invariance loss in VICReg', default='0', type=float)
@@ -355,7 +361,7 @@ def main():
     parser.add_argument('--captions', dest='captions', help='boolean to see whether to load the captions', default=False, type=bool)
     parser.add_argument('--wandb', dest='wandb', help='boolean to see whether to run with weights & Biasses', default=True, type=bool)
     args = parser.parse_args()
-        
+
 
     if args.cfg_file is not None:
         cfg_from_file(args.cfg_file)

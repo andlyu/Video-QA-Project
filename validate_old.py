@@ -1,3 +1,4 @@
+
 import torch
 # https://github.com/pytorch/pytorch/issues/973
 torch.multiprocessing.set_sharing_strategy('file_system')
@@ -12,45 +13,14 @@ from termcolor import colored
 from DataLoader import VideoQADataLoader
 from utils import todevice
 
-import model.HCRN_3_layer as HCRN
 import model.HCRN as HCRN
 
 from config import cfg, cfg_from_file
 import resource
-from IPython import embed
-import pickle
-
-SAVE_HIDDEN_STATE = False
-
 
 def validate(cfg, model, data, device, write_preds=False):
     model.eval()
     print('validating...')
-
-
-    #embed()
-    # # Visualize feature maps
-    batch_activations = []
-    activation = {}
-    def get_activation(name):
-        def hook(model, input, output):
-            clip_level_crn_output = torch.cat(
-                [frame_relation.unsqueeze(1) for frame_relation in output],
-                dim=1)
-            #output[0].shape[0] is batch_size
-            clip_level_crn_output = clip_level_crn_output.view(output[0].shape[0], -1, 512).to(device)
-            #embed()
-            if(name not in activation):
-                activation[name] = clip_level_crn_output.unsqueeze(1)
-            else:
-                activation[name] = torch.cat((activation[name],clip_level_crn_output.unsqueeze(1) ),dim = 1)
-        return hook
-
-    if(SAVE_HIDDEN_STATE):
-        model.visual_input_unit.clip_level_question_cond.register_forward_hook(get_activation('clip_level_question_cond'))
-        # model.conv1.register_forward_hook(get_activation('conv1'))
-
-
     total_acc, count = 0.0, 0
     all_preds = []
     gts = []
@@ -59,7 +29,7 @@ def validate(cfg, model, data, device, write_preds=False):
     with torch.no_grad():
         for batch in tqdm(data, total=len(data)):
             video_ids, question_ids, answers, *batch_input = [todevice(x, device) for x in batch]
-
+            
             if cfg.train.batch_size == 1:
                 answers = answers.to(device)
             else:
@@ -68,7 +38,7 @@ def validate(cfg, model, data, device, write_preds=False):
             if answers.dim() == 0:
                 answers = answers.unsqueeze(0)
             batch_size = answers.size(0)
-            logits = model(*batch_input)[0].to(device)
+            logits = model(*batch_input).to(device)
             if cfg.dataset.question_type in ['action', 'transition']:
                 preds = torch.argmax(logits.view(batch_size, 5), dim=1)
                 agreeings = (preds == answers)
@@ -106,43 +76,7 @@ def validate(cfg, model, data, device, write_preds=False):
             else:
                 total_acc += agreeings.float().sum().item()
                 count += answers.size(0)
-
-            if(SAVE_HIDDEN_STATE):
-                #Andrew storing the activations
-                batch_activations.append(activation['clip_level_question_cond'])
-                activation = {}
-    
         acc = total_acc / count
-
-    if(SAVE_HIDDEN_STATE):
-        norms = []
-        d_clips_norms = []
-        d1_norms = []
-        d2_norms = []
-        d5_norms = []
-        for ba in tqdm(batch_activations): #takes 4 minutes
-            norms.append(torch.norm(ba, dim=(2,3)).flatten())
-            d_clips = ba[1:,:,:,:] - ba[:-1,:,:,:]
-            d_clips_norms.append(torch.norm(d_clips, dim=(2,3)).flatten())
-            d1 = ba[:,1:,:,:] - ba[:,:-1,:,:]
-            d1_norms.append(torch.norm(d1, dim=(2,3)).flatten())
-            d2 = ba[:,2:,:,:] - ba[:,:-2,:,:]
-            d2_norms.append(torch.norm(d2, dim=(2,3)).flatten())
-            d5 = ba[:,5:,:,:] - ba[:,:-5,:,:]
-            d5_norms.append(torch.norm(d5, dim=(2,3)).flatten())
-
-        norms = torch.cat(norms, dim=0)
-        d_clips_norms = torch.cat(d_clips_norms, dim=0)
-        d1_norms = torch.cat(d1_norms, dim=0)
-        d2_norms = torch.cat(d2_norms, dim=0)
-        d5_norms = torch.cat(d5_norms, dim=0)
-        hist_dict = {'norms': norms,'d_clips_norms':d_clips_norms, 'd1_norms': d1_norms, 'd2_norms': d2_norms, 'd5_norms': d5_norms}
-
-        with open('hist_dict.pickle', 'wb') as handle:
-            pickle.dump(hist_dict, handle, protocol=pickle.HIGHEST_PROTOCOL)
-
-    # batch_activations: list of list of tensors (num_batches, num_clips)
-    # each tensor is of shape (batch_size, 512)
     if not write_preds:
         return acc
     else:
@@ -157,9 +91,7 @@ if __name__ == '__main__':
     parser.add_argument('--metric', dest='metric', help='question set', default='all', type=str)
 
     parser.add_argument('--sample', dest='sample', help='True if take sample, false if do whole set', default=False, type=bool)
-    parser.add_argument('--model_name', dest='model_name', help='Name of the experiment', default='model', type=str)
-    parser.add_argument('--captions', dest='captions', help='boolean to see whether to load the captions', default=False, type=bool)
-
+    
     args = parser.parse_args()
     if args.cfg_file is not None:
         cfg_from_file(args.cfg_file)
@@ -176,10 +108,9 @@ if __name__ == '__main__':
     ############## CHOOSE WHICH MODEL TO USE ######################
     # This one is the most recent model
     #ckpt = os.path.join(cfg.dataset.save_dir, 'ckpt', 'model-current.pt')
-    # This one is the highest validation
-    ckpt = os.path.join(cfg.dataset.save_dir, 'ckpt', args.model_name + '.pt')
-    #ckpt = '/usr0/home/alyubovs/agqa/hcrn-videoqa/results_25_35/expTGIF-QAFrameQA/ckpt/model.pt'
 
+    # This one is the highest validation
+    ckpt = os.path.join(cfg.dataset.save_dir, 'ckpt', 'model.pt')
     print(ckpt)
     assert os.path.exists(ckpt)
     ##############################################################
@@ -199,7 +130,6 @@ if __name__ == '__main__':
     rlimit = resource.getrlimit(resource.RLIMIT_NOFILE)
     resource.setrlimit(resource.RLIMIT_NOFILE, (4096, rlimit[1]))
 
-        
 
     if cfg.dataset.name == 'tgif-qa': # TODO: PATH [change all paths]
         cfg.dataset.vocab_json = '../storage/questions/tgif-qa_frameqa_vocab-balanced.json'# % args.metric
@@ -211,18 +141,9 @@ if __name__ == '__main__':
             cfg.dataset.test_question_pt = '../storage/questions/tgif-qa_frameqa_train_questions-%s.pt' % args.metric
         else: 
             print("invalid mode", args.mode)
-
-        if(args.captions):
-            cfg.dataset.train_question_pt = '/usr0/home/alyubovs/agqa/storage/questions_baseline_gen_captions/tgif-qa_frameqa_train_questions-%s.pt' % args.metric
-            cfg.dataset.val_question_pt = '/usr0/home/alyubovs/agqa/storage/questions_baseline_gen_captions/tgif-qa_frameqa_val_questions-%s.pt' % args.metric
-            cfg.dataset.test_question_pt = '/usr0/home/alyubovs/agqa/storage/questions_baseline_gen_captions/tgif-qa_frameqa_test_questions-%s.pt' % args.metric
-            cfg.dataset.vocab_json = '/usr0/home/alyubovs/agqa/storage/questions_baseline_gen_captions/tgif-qa_frameqa_vocab-balanced.json'
-
-
         cfg.dataset.appearance_feat = '../drive_data/tgif-qa_frameqa_appearance_feat.h5'
         cfg.dataset.motion_feat = '../drive_data/tgif-qa_frameqa_motion_feat.h5'
-        #cfg.dataset.appearance_feat = '../storage/gen_vid_features/appearance/tgif-qa_frameqa_appearance_feat_new.h5'
-        #cfg.dataset.motion_feat = '../storage/gen_vid_features/appearance/tgif-qa_frameqa_motion_feat_new1.h5'
+
     else:
         cfg.dataset.question_type = 'none'
         cfg.dataset.appearance_feat = '{}_appearance_feat.h5'
@@ -256,8 +177,6 @@ if __name__ == '__main__':
 
     if cfg.test.write_preds:
         print("IN WRITE PREDS")
-        print(cfg)
-
         acc, preds, gts, v_ids, q_ids = validate(cfg, model, test_loader, device, cfg.test.write_preds)
 
         sys.stdout.write('~~~~~~ Test Accuracy: {test_acc} ~~~~~~~\n'.format(
@@ -270,7 +189,7 @@ if __name__ == '__main__':
             os.makedirs(output_dir)
         else:
             assert os.path.isdir(output_dir)
-        preds_file = os.path.join(output_dir, f"test_preds_{args.model_name}.json")
+        preds_file = os.path.join(output_dir, "test_preds.json")
 
         if cfg.dataset.question_type in ['action', 'transition']: \
                 # Find groundtruth questions and corresponding answer candidates

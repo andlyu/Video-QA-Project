@@ -3,7 +3,7 @@ import h5py
 from scipy.misc import imresize
 import skvideo.io
 from PIL import Image
-
+import json
 import torch
 from torch import nn
 import torchvision
@@ -16,6 +16,8 @@ from datautils import tgif_qa
 from datautils import msrvtt_qa
 from datautils import msvd_qa
 
+DEBUG = False
+
 
 def build_resnet():
     if not hasattr(torchvision.models, args.model):
@@ -24,21 +26,30 @@ def build_resnet():
         raise ValueError('Feature extraction only supports ResNets')
     cnn = getattr(torchvision.models, args.model)(pretrained=True)
     model = torch.nn.Sequential(*list(cnn.children())[:-1])
-    model.cuda()
+    model.to(device)
     model.eval()
     return model
 
 
 def build_resnext():
+    print("In build resnext")
     model = resnext.resnet101(num_classes=400, shortcut_type='B', cardinality=32,
                               sample_size=112, sample_duration=16,
                               last_fc=False)
-    model = model.cuda()
+    print("A")
+    model = model.to(device)
+    print("B")
     model = nn.DataParallel(model, device_ids=None)
+    print("C")
     assert os.path.exists('preprocess/pretrained/resnext-101-kinetics.pth')
+    print("D")
+    
     model_data = torch.load('preprocess/pretrained/resnext-101-kinetics.pth', map_location='cpu')
+    print("E")
     model.load_state_dict(model_data['state_dict'])
+    print("F")
     model.eval()
+    print("Returning model")
     return model
 
 
@@ -55,7 +66,7 @@ def run_batch(cur_batch, model):
 
     image_batch = np.concatenate(cur_batch, 0).astype(np.float32)
     image_batch = (image_batch / 255.0 - mean) / std
-    image_batch = torch.FloatTensor(image_batch).cuda()
+    image_batch = torch.FloatTensor(image_batch).to(device)
     with torch.no_grad():
         image_batch = torch.autograd.Variable(image_batch)
 
@@ -79,6 +90,7 @@ def extract_clips_with_consecutive_frames(path, num_clips, num_frames_per_clip):
     try:
         video_data = skvideo.io.vread(path)
     except:
+        print('hehe')
         print('file {} error'.format(path))
         valid = False
         if args.model == 'resnext101':
@@ -145,6 +157,8 @@ def generate_h5(model, video_ids, num_clips, outfile):
             os.makedirs('data/{}'.format(args.dataset))
 
     dataset_size = len(video_ids)
+    with open('../storage/video/strID2numID.json') as json_file: # TODO: PATH
+        strId2numId = json.load(json_file)
 
     with h5py.File(outfile, 'w') as fd:
         feat_dset = None
@@ -170,7 +184,7 @@ def generate_h5(model, video_ids, num_clips, outfile):
                                                   dtype=np.float32)
                     video_ids_dset = fd.create_dataset('ids', shape=(dataset_size,), dtype=np.int)
             elif args.feature_type == 'motion':
-                clip_torch = torch.FloatTensor(np.asarray(clips)).cuda()
+                clip_torch = torch.FloatTensor(np.asarray(clips)).to(device)
                 if valid:
                     clip_feat = model(clip_torch)  # (8, 2048)
                     clip_feat = clip_feat.squeeze()
@@ -183,9 +197,18 @@ def generate_h5(model, video_ids, num_clips, outfile):
                                                   dtype=np.float32)
                     video_ids_dset = fd.create_dataset('ids', shape=(dataset_size,), dtype=np.int)
 
+            if(DEBUG):
+                print(video_id)
+                print(clip_feat.shape)
+                print(clip_feat[:2,:3,:3])
+                cats
+
             i1 = i0 + 1
             feat_dset[i0:i1] = clip_feat
-            video_ids_dset[i0:i1] = video_id
+            video_ids_dset[i0:i1] = strId2numId[video_id]
+            print(strId2numId[video_id])
+            if(strId2numId[video_id] == 0):
+                break
             i0 = i1
             _t['misc'].toc()
             if (i % 1000 == 0):
@@ -194,9 +217,10 @@ def generate_h5(model, video_ids, num_clips, outfile):
                               _t['misc'].average_time * (dataset_size - i1) / 3600))
 
 
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--gpu_id', type=int, default=2, help='specify which gpu will be used')
+    parser.add_argument('--gpu_id', type=int, default=0, help='specify which gpu will be used')
     # dataset info
     parser.add_argument('--dataset', default='tgif-qa', choices=['tgif-qa', 'msvd-qa', 'msrvtt-qa'], type=str)
     parser.add_argument('--question_type', default='none', choices=['frameqa', 'count', 'transition', 'action', 'none'], type=str)
@@ -205,7 +229,7 @@ if __name__ == '__main__':
                         help='output filepath',
                         default="data/{}/{}_{}_feat.h5", type=str)
     # image sizes
-    parser.add_argument('--num_clips', default=8, type=int)
+    parser.add_argument('--num_clips', default=24, type=int)
     parser.add_argument('--image_height', default=224, type=int)
     parser.add_argument('--image_width', default=224, type=int)
 
@@ -220,16 +244,19 @@ if __name__ == '__main__':
     else:
         raise Exception('Feature type not supported!')
     # set gpu
-    if args.model != 'resnext101':
-        torch.cuda.set_device(args.gpu_id)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu") 
+    print('device is', device)
+    #torch.cuda.set_device('cuda')
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
 
     # annotation files
-    if args.dataset == 'tgif-qa':
-        args.annotation_file = '/ceph-g/lethao/datasets/tgif-qa/csv/Total_{}_question.csv'
-        args.video_dir = '/ceph-g/lethao/datasets/tgif-qa/gifs'
-        args.outfile = 'data/{}/{}/{}_{}_{}_feat.h5'
+    if args.dataset == 'tgif-qa': # TODO: PATH
+        args.annotation_file = '../storage/questions_baseline/Total_{}_question-balanced.csv'
+        args.video_dir = '../storage/charades_videos/Charades_v1_480'
+        args.outfile = '../storage/gen_vid_features/appearance/{}_{}_{}_feat_new1.h5'
+        if(DEBUG):
+            args.outfile = '../storage/DEBUG/appearance/{}_{}_{}_feat.h5'
         video_paths = tgif_qa.load_video_paths(args)
         random.shuffle(video_paths)
         # load model
@@ -238,7 +265,8 @@ if __name__ == '__main__':
         elif args.model == 'resnext101':
             model = build_resnext()
         generate_h5(model, video_paths, args.num_clips,
-                    args.outfile.format(args.dataset, args.question_type, args.dataset, args.question_type, args.feature_type))
+                    args.outfile.format(args.dataset, args.question_type, args.feature_type))
+
     elif args.dataset == 'msrvtt-qa':
         args.annotation_file = '/ceph-g/lethao/datasets/msrvtt/annotations/{}_qa.json'
         args.video_dir = '/ceph-g/lethao/datasets/msrvtt/videos/'

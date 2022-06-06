@@ -1,5 +1,5 @@
 gpu_id: 2
-multi_gpus: False
+multi_gpus: True
 num_workers: 4
 seed: 666
 exp_name: 'expTGIF-QAAction'

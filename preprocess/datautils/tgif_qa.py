@@ -3,22 +3,26 @@ import pandas as pd
 import json
 from datautils import utils
 import nltk
-
+nltk.download('punkt')
 import pickle
 import numpy as np
-
+import csv
+import random
+from IPython import embed
 
 def load_video_paths(args):
     ''' Load a list of (path,image_id tuples).'''
     input_paths = []
-    annotation = pd.read_csv(args.annotation_file.format(args.question_type), delimiter='\t')
-    gif_names = list(annotation['gif_name'])
-    keys = list(annotation['key'])
+    annotation = pd.read_csv(args.annotation_file.format(args.question_type), delimiter=',')
+    gif_names = list(annotation['gif_name']) 
+    keys = list(annotation['vid_id'])
     print("Number of questions: {}".format(len(gif_names)))
     for idx, gif in enumerate(gif_names):
-        gif_abs_path = os.path.join(args.video_dir, ''.join([gif, '.gif']))
+        gif_abs_path = os.path.join(args.video_dir, ''.join([gif, '.mp4']))
         input_paths.append((gif_abs_path, keys[idx]))
+        
     input_paths = list(set(input_paths))
+    print('input paths[0:10]', input_paths[0:10])
     print("Number of unique videos: {}".format(len(input_paths)))
 
     return input_paths
@@ -42,7 +46,8 @@ def openeded_encoding_data(args, vocab, questions, video_names, video_ids, answe
         question_ids.append(idx)
         video_names_tbw.append(video_names[idx])
         video_ids_tbw.append(video_ids[idx])
-
+        if idx < 10:
+            print(idx, video_ids[idx])
         if args.question_type == "frameqa":
             answer = answers[idx]
             if answer in vocab['answer_token_to_idx']:
@@ -76,9 +81,7 @@ def openeded_encoding_data(args, vocab, questions, video_names, video_ids, answe
             vector = glove.get(token_itow[i], np.zeros((dim_word,)))
             glove_matrix.append(vector)
         glove_matrix = np.asarray(glove_matrix, dtype=np.float32)
-        print(glove_matrix.shape)
 
-    print('Writing ', args.output_pt.format(args.question_type, args.question_type, mode))
     obj = {
         'questions': questions_encoded,
         'questions_len': questions_len,
@@ -88,8 +91,8 @@ def openeded_encoding_data(args, vocab, questions, video_names, video_ids, answe
         'answers': all_answers,
         'glove': glove_matrix,
     }
-    with open(args.output_pt.format(args.question_type, args.question_type, mode), 'wb') as f:
-        pickle.dump(obj, f)
+    with open(args.output_pt.format(args.question_type, mode), 'wb') as f:
+        pickle.dump(obj, f, protocol=4)
 
 def multichoice_encoding_data(args, vocab, questions, video_names, video_ids, answers, ans_candidates, mode='train'):
     # Encode all questions
@@ -177,11 +180,8 @@ def multichoice_encoding_data(args, vocab, questions, video_names, video_ids, an
 
 def process_questions_openended(args):
     print('Loading data')
-    if args.mode in ["train"]:
-        csv_data = pd.read_csv(args.annotation_file.format("Train", args.question_type), delimiter='\t')
-    else:
-        csv_data = pd.read_csv(args.annotation_file.format("Test", args.question_type), delimiter='\t')
-    csv_data = csv_data.iloc[np.random.permutation(len(csv_data))]
+    print('Reading from file: ', args.annotation_file)
+    csv_data = pd.read_csv(args.annotation_file)
     questions = list(csv_data['question'])
     answers = list(csv_data['answer'])
     video_names = list(csv_data['gif_name'])
@@ -219,12 +219,19 @@ def process_questions_openended(args):
             'question_answer_token_to_idx': {'<NULL>': 0, '<UNK>': 1}
         }
 
-        print('Write into %s' % args.vocab_json.format(args.question_type, args.question_type))
-        with open(args.vocab_json.format(args.question_type, args.question_type), 'w') as f:
+        print('Write into %s' % args.vocab_json.format(args.question_type))
+        with open(args.vocab_json.format(args.question_type), 'w+') as f:
             json.dump(vocab, f, indent=4)
 
         # split 10% of questions for evaluation
-        split = int(0.9 * len(questions))
+        print("Done dumping vocab")
+        split = int(0.8 * len(questions))
+
+        # make sure split doesnt split a video
+
+        while (video_ids[split - 1] == video_ids[split]): 
+            split = split + 1
+
         train_questions = questions[:split]
         train_answers = answers[:split]
         train_video_names = video_names[:split]
@@ -234,12 +241,34 @@ def process_questions_openended(args):
         val_answers = answers[split:]
         val_video_names = video_names[split:]
         val_video_ids = video_ids[split:]
+        
+        # zip together
+        train_data = list(zip(train_questions, train_answers, train_video_names, train_video_ids))
+        val_data = list(zip(val_questions, val_answers, val_video_names, val_video_ids))
+        
+        # shuffle
+        random.shuffle(train_data)
+        random.shuffle(val_data)
+
+
+        # unzip
+        unzipped_tr = list(zip(*train_data))
+        train_questions = list(unzipped_tr[0])
+        train_answers = list(unzipped_tr[1])
+        train_video_names = list(unzipped_tr[2])
+        train_video_ids = list(unzipped_tr[3])
+
+        unzipped_val = list(zip(*val_data))
+        val_questions = list(unzipped_val[0])
+        val_answers = list(unzipped_val[1])
+        val_video_names = list(unzipped_val[2])
+        val_video_ids = list(unzipped_val[3])
 
         openeded_encoding_data(args, vocab, train_questions, train_video_names, train_video_ids, train_answers, mode='train')
         openeded_encoding_data(args, vocab, val_questions, val_video_names, val_video_ids, val_answers, mode='val')
     else:
         print('Loading vocab')
-        with open(args.vocab_json.format(args.question_type, args.question_type), 'r') as f:
+        with open(args.vocab_json.format(args.question_type), 'r') as f:
             vocab = json.load(f)
         openeded_encoding_data(args, vocab, questions, video_names, video_ids, answers, mode='test')
 
@@ -261,7 +290,6 @@ def process_questions_mulchoices(args):
         [csv_data['a1'], csv_data['a2'], csv_data['a3'], csv_data['a4'], csv_data['a5']])
     ans_candidates = ans_candidates.transpose()
     print(ans_candidates.shape)
-    # ans_candidates: (num_ques, 5)
     print('number of questions: %s' % len(questions))
     # Either create the vocab or load it from disk
     if args.mode in ['train']:
@@ -277,7 +305,6 @@ def process_questions_mulchoices(args):
                         answer_token_to_idx[token] = len(answer_token_to_idx)
                     if token not in question_answer_token_to_idx:
                         question_answer_token_to_idx[token] = len(question_answer_token_to_idx)
-        print('Get answer_token_to_idx, num: %d' % len(answer_token_to_idx))
 
         question_token_to_idx = {'<NULL>': 0, '<UNK>': 1}
         for i, q in enumerate(questions):
@@ -287,11 +314,6 @@ def process_questions_mulchoices(args):
                     question_token_to_idx[token] = len(question_token_to_idx)
                 if token not in question_answer_token_to_idx:
                     question_answer_token_to_idx[token] = len(question_answer_token_to_idx)
-
-        print('Get question_token_to_idx')
-        print(len(question_token_to_idx))
-        print('Get question_answer_token_to_idx')
-        print(len(question_answer_token_to_idx))
 
         vocab = {
             'question_token_to_idx': question_token_to_idx,

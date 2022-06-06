@@ -8,9 +8,12 @@ __C = edict()
 cfg = __C
 
 __C.gpu_id = 0
-__C.num_workers = 4
+__C.num_workers = 0
 __C.multi_gpus = False
 __C.seed = 666
+__C.appearance_feat = None
+__C.motion_feat = None
+__C.caption_dir = None
 # training options
 __C.train = edict()
 __C.train.restore = False
@@ -27,6 +30,12 @@ __C.train.k_max_frame_level = 16
 __C.train.k_max_clip_level = 8
 __C.train.spl_resolution = 1
 __C.train = dict(__C.train)
+__C.train.loss_ratio = 0
+__C.train.var_loss = 0
+__C.train.inv_loss = 0
+__C.train.cov_loss = 0
+__C.train.loss_dim = 512
+__C.train.dropout = 0
 
 # validation
 __C.val = edict()
@@ -95,6 +104,6 @@ def merge_cfg(yaml_cfg, cfg):
 def cfg_from_file(file_name):
     import yaml
     with open(file_name, 'r') as f:
-        yaml_cfg = edict(yaml.load(f))
+        yaml_cfg = edict(yaml.safe_load(f))
 
     merge_cfg(yaml_cfg, __C)

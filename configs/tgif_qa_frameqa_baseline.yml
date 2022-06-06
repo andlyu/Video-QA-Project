@@ -37,4 +37,4 @@ dataset:
   data_dir: 'data/tgif-qa/frameqa' #Nothing in this folder
   #save_dir: 'results/gpt2_captions/'
   #save_dir: 'results/results_sparse_loss/'
-  save_dir: 'results/results_results_w_loss'
+  save_dir: 'results_25_35/'

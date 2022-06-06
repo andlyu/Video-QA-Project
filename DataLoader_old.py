@@ -26,8 +26,12 @@ import math
 import h5py
 from torch.utils.data import Dataset, DataLoader
 import random
-
 from IPython import embed
+
+#NUM_VIDEOS = 100 #960 #All is 9600
+#960 takes 45 min
+#100 takes 4 min
+NUM_VIDEOS = 9600
 
 def invert_dict(d):
     return {v: k for k, v in d.items()}
@@ -50,7 +54,7 @@ class VideoQADataset(Dataset):
         self.all_answers = answers
         self.all_questions = torch.LongTensor(np.asarray(questions))
         self.all_questions_len = torch.LongTensor(np.asarray(questions_len))
-        self.all_video_ids = torch.LongTensor(np.asarray(video_ids))
+        self.all_video_ids = torch.LongTensor(np.asarray(video_ids)) #limit video Ids here
         self.all_q_ids = q_ids
         self.app_feature_h5 = app_feature_h5
         self.motion_feature_h5 = motion_feature_h5
@@ -83,8 +87,8 @@ class VideoQADataset(Dataset):
             motion_feat = f_motion['resnext_features'][motion_index]  # (8, 2048)
         appearance_feat = torch.from_numpy(appearance_feat)
         motion_feat = torch.from_numpy(motion_feat)
-        
 
+        
         ###################### BLIND-VERSION ############################
         # Uncomment below for blind version of the model
         #appearance_feat = np.zeros((8, 16, 2048), dtype=float)
@@ -92,7 +96,6 @@ class VideoQADataset(Dataset):
         #appearance_feat = torch.from_numpy(appearance_feat).type(torch.FloatTensor)
         #motion_feat = torch.from_numpy(motion_feat).type(torch.FloatTensor)
         #################################################################
-
         return (
             video_idx, question_idx, answer, ans_candidates, ans_candidates_len, appearance_feat, motion_feat, question,
             question_len)
@@ -103,7 +106,7 @@ class VideoQADataset(Dataset):
 
 class VideoQADataLoader(DataLoader):
 
-    def __init__(self, **kwargs): 
+    def __init__(self, **kwargs):
         vocab_json_path = str(kwargs.pop('vocab_json'))
         print('loading vocab from %s' % (vocab_json_path))
         vocab = load_vocab(vocab_json_path)
@@ -111,22 +114,42 @@ class VideoQADataLoader(DataLoader):
         with open('/usr0/home/alyubovs/agqa/storage/video/strID2numID.json', 'rb') as f: # TODO: PATH
             strID2NumID = json.load(f)
         
+
+        print('loading appearance feature from %s' % (kwargs['appearance_feat']))
+        with h5py.File(kwargs['appearance_feat'], 'r') as app_features_file:
+            app_video_ids = app_features_file['ids'][()]
+            app_video_ids.sort()
+            app_video_ids = app_video_ids[:NUM_VIDEOS]
+        app_feat_id_to_index = {str(id): i for i, id in enumerate(app_video_ids)}
+        print('loading motion feature from %s' % (kwargs['motion_feat']))
+        with h5py.File(kwargs['motion_feat'], 'r') as motion_features_file:
+            motion_video_ids = motion_features_file['ids'][()]
+            motion_video_ids.sort()
+            motion_video_ids = motion_video_ids[:NUM_VIDEOS]
+        motion_feat_id_to_index = {str(id): i for i, id in enumerate(motion_video_ids)}
+
+        str_ids = set() # set of video ids
+        for id in strID2NumID:
+            if(str(strID2NumID[id]) in motion_feat_id_to_index):
+                str_ids.add(id)
+
         question_pt_path = str(kwargs.pop('question_pt'))
         print('loading questions from %s' % (question_pt_path))
         question_type = kwargs.pop('question_type')
         with open(question_pt_path, 'rb') as f:
             obj = pickle.load(f)
-            questions = obj['questions']
-            questions_len = obj['questions_len']
-            video_ids = obj['video_ids']
+            idx = [x[:5] in str_ids for x in obj['video_ids']]
+            questions = obj['questions'][idx]
+            questions_len = obj['questions_len'][idx]
+            video_ids = obj['video_ids'][idx]
             video_ids = [strID2NumID[q_id[:5]] for q_id in video_ids]
             video_ids = np.asarray(video_ids)
-            q_ids = obj['question_id']
-            answers = obj['answers']
-            print('average question length is ', np.mean(questions_len))
+            q_ids = list(np.array(obj['question_id'])[idx])
+            #embed()
+            answers = list(np.array(obj['answers'])[idx])
             if kwargs.pop('sample'):
                 z = list(zip(questions, questions_len, video_ids, q_ids, answers))
-                s = random.sample(z, min(len(z),50000))
+                s = random.sample(z, 50000)
                 unzipped = list(zip(*s))
                 questions = np.asarray(unzipped[0])
                 questions_len = np.asarray(unzipped[1])
@@ -174,26 +197,8 @@ class VideoQADataLoader(DataLoader):
                     ans_candidates = ans_candidates[:test_num]
                     ans_candidates_len = ans_candidates_len[:test_num]
 
-        print('loading appearance feature from %s' % (kwargs['appearance_feat']))
-        with h5py.File(kwargs['appearance_feat'], 'r') as app_features_file:
-            app_video_ids = app_features_file['ids'][()]
-        app_feat_id_to_index = {str(id): i for i, id in enumerate(app_video_ids)}
-        print('loading motion feature from %s' % (kwargs['motion_feat']))
-        with h5py.File(kwargs['motion_feat'], 'r') as motion_features_file:
-            motion_video_ids = motion_features_file['ids'][()]
-        motion_feat_id_to_index = {str(id): i for i, id in enumerate(motion_video_ids)}
         self.app_feature_h5 = kwargs.pop('appearance_feat')
         self.motion_feature_h5 = kwargs.pop('motion_feat')
-
-        #TODO: remove the next lines. there is an error in the code, and this is a wokraround
-        id_mask = np.array([str(id) in  motion_feat_id_to_index for id in video_ids])
-        answers = np.array(answers)[id_mask]
-        questions = np.asarray(questions)[id_mask]
-        questions_len = np.asarray(questions_len)[id_mask]
-        video_ids = np.asarray(video_ids)[id_mask]
-        q_ids = np.asarray(q_ids)[id_mask]
-
-
         self.dataset = VideoQADataset(answers, ans_candidates, ans_candidates_len, questions, questions_len,
                                       video_ids, q_ids,
                                       self.app_feature_h5, app_feat_id_to_index, self.motion_feature_h5,

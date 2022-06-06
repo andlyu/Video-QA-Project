@@ -1,4 +1,5 @@
-gpu_id: 3
+#This file resotres a saved model and continues training on it
+gpu_id: 1
 multi_gpus: False
 num_workers: 16 #16
 seed: 666
@@ -14,7 +15,7 @@ train:
   lr: 0.0001
   batch_size: 32 # (1024 -> 1.1 h per epoch) # 32 -> 36 h per epoch
   restore: True
-  max_epochs: 2305
+  max_epochs: 30
   word_dim: 300
   
   module_dim: 512
@@ -35,6 +36,4 @@ dataset:
   name: 'tgif-qa'
   question_type: 'frameqa'
   data_dir: 'data/tgif-qa/frameqa' #Nothing in this folder
-  #save_dir: 'results/gpt2_captions/'
-  #save_dir: 'results/results_sparse_loss/'
-  save_dir: 'results/results_results_w_loss'
+  save_dir: 'results/results_sparse_loss/'

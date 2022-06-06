@@ -13,7 +13,6 @@ from DataLoader import VideoQADataLoader
 from utils import todevice
 
 import model.HCRN_3_layer as HCRN
-import model.HCRN as HCRN
 
 from config import cfg, cfg_from_file
 import resource
@@ -158,8 +157,7 @@ if __name__ == '__main__':
 
     parser.add_argument('--sample', dest='sample', help='True if take sample, false if do whole set', default=False, type=bool)
     parser.add_argument('--model_name', dest='model_name', help='Name of the experiment', default='model', type=str)
-    parser.add_argument('--captions', dest='captions', help='boolean to see whether to load the captions', default=False, type=bool)
-
+    
     args = parser.parse_args()
     if args.cfg_file is not None:
         cfg_from_file(args.cfg_file)
@@ -199,26 +197,17 @@ if __name__ == '__main__':
     rlimit = resource.getrlimit(resource.RLIMIT_NOFILE)
     resource.setrlimit(resource.RLIMIT_NOFILE, (4096, rlimit[1]))
 
-        
 
     if cfg.dataset.name == 'tgif-qa': # TODO: PATH [change all paths]
-        cfg.dataset.vocab_json = '../storage/questions/tgif-qa_frameqa_vocab-balanced.json'# % args.metric
+        cfg.dataset.vocab_json = '../storage/questions_w_captions/tgif-qa_frameqa_vocab-balanced.json'# % args.metric
         if args.mode == 'val':
-            cfg.dataset.test_question_pt = '../storage/questions/tgif-qa_frameqa_val_questions-%s.pt' % args.metric
+            cfg.dataset.test_question_pt = '../storage/questions_w_captions/tgif-qa_frameqa_val_questions-%s.pt' % args.metric
         elif args.mode == 'test':
-            cfg.dataset.test_question_pt = '../storage/questions/tgif-qa_frameqa_test_questions-%s.pt' % args.metric
+            cfg.dataset.test_question_pt = '../storage/questions_w_captions/tgif-qa_frameqa_test_questions-%s.pt' % args.metric
         elif args.mode == 'train':
-            cfg.dataset.test_question_pt = '../storage/questions/tgif-qa_frameqa_train_questions-%s.pt' % args.metric
+            cfg.dataset.test_question_pt = '../storage/questions_w_captions/tgif-qa_frameqa_train_questions-%s.pt' % args.metric
         else: 
             print("invalid mode", args.mode)
-
-        if(args.captions):
-            cfg.dataset.train_question_pt = '/usr0/home/alyubovs/agqa/storage/questions_baseline_gen_captions/tgif-qa_frameqa_train_questions-%s.pt' % args.metric
-            cfg.dataset.val_question_pt = '/usr0/home/alyubovs/agqa/storage/questions_baseline_gen_captions/tgif-qa_frameqa_val_questions-%s.pt' % args.metric
-            cfg.dataset.test_question_pt = '/usr0/home/alyubovs/agqa/storage/questions_baseline_gen_captions/tgif-qa_frameqa_test_questions-%s.pt' % args.metric
-            cfg.dataset.vocab_json = '/usr0/home/alyubovs/agqa/storage/questions_baseline_gen_captions/tgif-qa_frameqa_vocab-balanced.json'
-
-
         cfg.dataset.appearance_feat = '../drive_data/tgif-qa_frameqa_appearance_feat.h5'
         cfg.dataset.motion_feat = '../drive_data/tgif-qa_frameqa_motion_feat.h5'
         #cfg.dataset.appearance_feat = '../storage/gen_vid_features/appearance/tgif-qa_frameqa_appearance_feat_new.h5'
